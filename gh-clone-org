@@ -67,7 +67,7 @@ while [ "$1" != "" ]; do
         path_to_clone="$1"
         ;;
     -h | --help)
-        usage
+        _usage
         exit
         ;;
     *)
