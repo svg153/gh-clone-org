@@ -14,7 +14,8 @@ function _usage() {
     echo "  -o, --org ORG"
     echo "    Github organization."
     echo "  -p, --path PATH"
-    echo "    Clone path. Default: current directory."
+    echo "    Path to clone the repositories. Will be created if it does not exist."
+    echo "    Default: current directory."
     echo "  -h, --help"
     echo "    Display this message."
     echo ""
@@ -80,6 +81,7 @@ done
 _check_organization || exit 1
 
 [ -z "${path_to_clone}" ] && path_to_clone=$(pwd)
+[ -d "${path_to_clone}" ] || mkdir -p "${path_to_clone}"
 
 
 cd "${path_to_clone}" || exit 1
