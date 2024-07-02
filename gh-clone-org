@@ -47,10 +47,21 @@ function _check_organization() {
     fi
 }
 
-function _gh_clone_org() {
-    local organization=$1
-    local server_host_ssh=$2
+function _get_repository_ssh_url() {
+    local organization=$1; shift
+    local server_host_ssh=$1; shift
     
+    local jq_query='.[].ssh_url'
+    local query="orgs/${organization}/repos"
+    
+    repos_ssh_url=$(gh api --paginate "${query}" -q "${jq_query}")
+    echo ${repos_ssh_url}
+}
+
+function _gh_clone_org() {
+    local organization=$1; shift
+    local server_host_ssh=$1; shift
+    local default_gh_host=$1; shift
     local -r default_gh_host="github.com"
     
     local has_to_change_host_ssh=false
@@ -58,20 +69,25 @@ function _gh_clone_org() {
         has_to_change_host_ssh=true
     fi
 
-    repositories=$(gh api -X GET /orgs/${organization}/repos)
-    for repo in $(echo "${repositories}" | jq -r '.[].name'); do
-        url=$(echo "${repositories}" | jq -r ".[] | select(.name == \"${repo}\") | .ssh_url")
+    repositories=$(_get_repository_ssh_url "${organization}" "${server_host_ssh}")
+    commands=""
+    for url in ${repositories}; do
         if ${has_to_change_host_ssh}; then
             url=${url/${default_gh_host}/${server_host_ssh}}
         fi
+        cmd="echo \"Cloning ${url}\""
         url=${url/github.com/${server_host_ssh}}        
         commands="$commands echo \"Cloning ${repo}\" && git clone --quiet ${url};"
+        cmd="${cmd} && git clone ${url}"
+        cmd="${cmd} ;"
+        commands="${commands}${cmd}"        
     done
     echo ${commands} | xargs -P "$(nproc)" -d ';' -n 1 sh -c
 }
 
 _require gh
 
+default_gh_host="github.com"
 server_host_ssh="github.com"
 
 while [ "$1" != "" ]; do
@@ -107,4 +123,5 @@ _check_organization || exit 1
 
 cd "${path_to_clone}" || exit 1
 
-_gh_clone_org "${organization}" "${server_host_ssh}"
+
+_gh_clone_org "${organization}" "${server_host_ssh}" "${default_gh_host}"
