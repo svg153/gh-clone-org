@@ -28,6 +28,12 @@ gh extension install svg153/gh-clone-org
 gh clone-org <org>
 ```
 
+For help, run:
+
+```sh
+gh clone-org --help
+```
+
 ## Contributing
 
 We welcome contributions! Please read our CONTRIBUTING.md for details on how to submit pull requests and suggestions.
