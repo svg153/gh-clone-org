@@ -13,24 +13,26 @@ function _usage() {
     echo "    Github organization."
     echo "  -o, --org ORG"
     echo "    Github organization."
-    echo "  -s, --server-host-ssh HOST"
-    echo "    When are you using multiple accounts, with multiple SSH keys, you can use this option to specify the server host."
-    echo "    Default: github.com"
     echo "  -p, --path PATH"
     echo "    Path to clone the repositories. Will be created if it does not exist."
     echo "    Default: current directory."
     echo "  --diasable-clone-protection"
     echo "    Disable the clone protection. This is useful when you have a hook that blocks the clone or post-checkout hooks."
     echo "    Default: false"
+    echo "  -s, --server-host-ssh HOST"
+    echo "    When are you using multiple accounts, with multiple SSH keys, you can use this option to specify the server host."
+    echo "    Default: github.com"
     echo "  -h, --help"
     echo "    Display this message."
     echo ""
     echo "Limitations:"
     echo "  - Only works with organization"
+    echo "  - Not be able to limit or filter the repositories to clone"
     echo ""
     echo "Examples:"
     echo "  gh clone-org github"
     echo "  gh clone-org github -p ~/github"
+    echo "  gh clone-org github -s github.com-company"
 }
 
 function _check_organization() {
@@ -106,13 +108,13 @@ while [ "$1" != "" ]; do
         shift
         path_to_clone="$1"
         ;;
-    -s | --server-host-ssh)
-        shift
-        server_host_ssh="$1"
-        ;;
     --disable-clone-protection)
         shift
         disable_clone_protection=true
+        ;;
+    -s | --server-host-ssh)
+        shift
+        server_host_ssh="$1"
         ;;
     -h | --help)
         _usage
