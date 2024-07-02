@@ -13,6 +13,9 @@ function _usage() {
     echo "    Github organization."
     echo "  -o, --org ORG"
     echo "    Github organization."
+    echo "  -s, --server-host-ssh HOST"
+    echo "    When are you using multiple accounts, with multiple SSH keys, you can use this option to specify the server host."
+    echo "    Default: github.com"
     echo "  -p, --path PATH"
     echo "    Path to clone the repositories. Will be created if it does not exist."
     echo "    Default: current directory."
@@ -46,16 +49,30 @@ function _check_organization() {
 
 function _gh_clone_org() {
     local organization=$1
+    local server_host_ssh=$2
+    
+    local -r default_gh_host="github.com"
+    
+    local has_to_change_host_ssh=false
+    if [ "${server_host_ssh}" != "${default_gh_host}" ]; then
+        has_to_change_host_ssh=true
+    fi
 
     repositories=$(gh api -X GET /orgs/${organization}/repos)
     for repo in $(echo "${repositories}" | jq -r '.[].name'); do
         url=$(echo "${repositories}" | jq -r ".[] | select(.name == \"${repo}\") | .ssh_url")
+        if ${has_to_change_host_ssh}; then
+            url=${url/${default_gh_host}/${server_host_ssh}}
+        fi
+        url=${url/github.com/${server_host_ssh}}        
         commands="$commands echo \"Cloning ${repo}\" && git clone --quiet ${url};"
     done
     echo ${commands} | xargs -P "$(nproc)" -d ';' -n 1 sh -c
 }
 
 _require gh
+
+server_host_ssh="github.com"
 
 while [ "$1" != "" ]; do
     case $1 in
@@ -66,6 +83,10 @@ while [ "$1" != "" ]; do
     -p | --path)
         shift
         path_to_clone="$1"
+        ;;
+    -s | --server-host-ssh)
+        shift
+        server_host_ssh="$1"
         ;;
     -h | --help)
         _usage
@@ -86,4 +107,4 @@ _check_organization || exit 1
 
 cd "${path_to_clone}" || exit 1
 
-_gh_clone_org "${organization}"
+_gh_clone_org "${organization}" "${server_host_ssh}"
