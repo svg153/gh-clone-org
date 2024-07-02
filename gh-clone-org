@@ -19,6 +19,9 @@ function _usage() {
     echo "  -p, --path PATH"
     echo "    Path to clone the repositories. Will be created if it does not exist."
     echo "    Default: current directory."
+    echo "  --diasable-clone-protection"
+    echo "    Disable the clone protection. This is useful when you have a hook that blocks the clone or post-checkout hooks."
+    echo "    Default: false"
     echo "  -h, --help"
     echo "    Display this message."
     echo ""
@@ -62,7 +65,7 @@ function _gh_clone_org() {
     local organization=$1; shift
     local server_host_ssh=$1; shift
     local default_gh_host=$1; shift
-    local -r default_gh_host="github.com"
+    local disable_clone_protection=$1; shift
     
     local has_to_change_host_ssh=false
     if [ "${server_host_ssh}" != "${default_gh_host}" ]; then
@@ -72,13 +75,15 @@ function _gh_clone_org() {
     repositories=$(_get_repository_ssh_url "${organization}" "${server_host_ssh}")
     commands=""
     for url in ${repositories}; do
+        repo_name=$(echo ${url} | awk -F'/' '{print $NF}' | sed 's/.git//')
         if ${has_to_change_host_ssh}; then
             url=${url/${default_gh_host}/${server_host_ssh}}
         fi
-        cmd="echo \"Cloning ${url}\""
-        url=${url/github.com/${server_host_ssh}}        
-        commands="$commands echo \"Cloning ${repo}\" && git clone --quiet ${url};"
-        cmd="${cmd} && git clone ${url}"
+        cmd="echo \"Cloning ${repo_name}\""
+        if ${disable_clone_protection}; then
+            cmd="${cmd} && export GIT_CLONE_PROTECTION_ACTIVE=false"
+        fi
+        cmd="${cmd} && git clone --quiet ${url}"
         cmd="${cmd} ;"
         commands="${commands}${cmd}"        
     done
@@ -89,6 +94,7 @@ _require gh
 
 default_gh_host="github.com"
 server_host_ssh="github.com"
+disable_clone_protection=false
 
 while [ "$1" != "" ]; do
     case $1 in
@@ -103,6 +109,10 @@ while [ "$1" != "" ]; do
     -s | --server-host-ssh)
         shift
         server_host_ssh="$1"
+        ;;
+    --disable-clone-protection)
+        shift
+        disable_clone_protection=true
         ;;
     -h | --help)
         _usage
