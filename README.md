@@ -34,10 +34,6 @@ For help, run:
 gh clone-org --help
 ```
 
-## Contributing
-
-We welcome contributions! Please read our CONTRIBUTING.md for details on how to submit pull requests and suggestions.
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
