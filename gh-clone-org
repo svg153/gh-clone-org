@@ -66,7 +66,9 @@ function _get_repository_ssh_url() {
 
     local jq_query='.[].ssh_url'
     local query="orgs/${organization}/repos"
-    
+
+    echo "Getting repositories from ${organization}"
+
     repos_ssh_url=$(gh api --paginate "${query}" -q "${jq_query}")
     echo ${repos_ssh_url}
 }
