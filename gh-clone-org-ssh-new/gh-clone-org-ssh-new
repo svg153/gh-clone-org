@@ -1,0 +1,233 @@
+#!/bin/bash
+
+function _require() {
+    if [[ -z $(command -v "$1" 2>/dev/null) ]]; then
+        echo "Install $1 and try again"
+        exit 1
+    fi
+}
+
+function _usage() {
+    echo "Usage:"
+    echo "gh clone-org -o ORG [-p PATH] [--gh-cli-user-to-clone USER] [--update-org-folder] [--disable-clone-protection] [-s SERVER_HOST_SSH] [-h]"
+    echo ""
+    echo "Clone all repositories from an organization in Github to a folder. If the repository already exists, it will update the repository. It will clone the repositories in parallel"
+    echo ""
+    echo "Options:"
+    echo "  -o, --org ORG"
+    echo "    Github organization."
+    echo "  -p, --path PATH"
+    echo "    Path to clone the repositories. Will be created if it does not exist."
+    echo "    Default: current directory."
+    echo "  --gh-cli-user-to-clone USER"
+    echo "    Github CLI user to clone the repositories."
+    echo "    Default: current user."
+    echo "  --update-org-folder"
+    echo "    Update the repositories in the organization folder and clone the new ones."
+    echo "    Default: false"
+    echo "  --disable-clone-protection"
+    echo "    Disable the clone protection. This is useful when you have a hook that blocks the clone or post-checkout hooks."
+    echo "    Default: false"
+    echo "  -s, --server-host-ssh HOST"
+    echo "    When are you using multiple accounts, with multiple SSH keys, you can use this option to specify the server host."
+    echo "    Default: github.com"
+    echo "  -h, --help"
+    echo "    Display this message."
+    echo ""
+    echo "Limitations:"
+    echo "  - Only works with organization"
+    echo "  - Not be able to limit or filter the repositories to clone"
+    echo ""
+    echo "Examples:"
+    echo "  gh clone-org github"
+    echo "  gh clone-org github -p ~/github"
+    echo "  gh clone-org github -s github.com-company"
+}
+
+function _check_organization() {
+    if [ -z "${organization}" ]; then
+        echo "Error: Organization is required"
+        return 1
+    fi
+
+    if [ "$(gh api "users/${organization}" -q '.type' 2> /dev/null)" = "User" ]; then
+        echo "Error: This extension only works with organizations"
+        return 1
+    fi
+
+    if ! gh api -X GET "/orgs/${organization}" --silent 2> /dev/null; then
+        echo "Error: Organization ${organization} does not exist"
+        return 1
+    fi
+}
+
+function _gh_clone_org() {
+    local organization=$1; shift
+    local server_host_ssh=$1; shift
+
+    local default_gh_host="github.com"
+
+    local has_to_change_host_ssh=false
+    if [ "${server_host_ssh}" != "${default_gh_host}" ]; then
+        has_to_change_host_ssh=true
+    fi
+
+    _clone_all_repositories "${organization}" "${server_host_ssh}" "${has_to_change_host_ssh}" "${default_gh_host}"
+}
+
+function _clone_all_repositories() {
+    local organization=$1; shift
+    local server_host_ssh=$1; shift
+    local has_to_change_host_ssh=$1; shift
+    local default_gh_host=$1; shift
+
+    repositories=$(_get_all_repositories "${organization}")
+    urls_to_clone=$(_get_all_urls_to_clone "${repositories}" "${server_host_ssh}" "${has_to_change_host_ssh}" "${default_gh_host}")
+
+    _clone_all "${urls_to_clone}"
+}
+
+function _get_all_repositories() {
+    local organization=$1; shift
+
+    local per_page=100
+    local page=1
+
+    rs=$(_get_repositories "${organization}" "${per_page}" "${page}")
+    repositories=${rs}
+    while [ "$rs" != "[]" ]; do
+        page=$((page + 1))
+        rs=$(_get_repositories "${organization}" "${per_page}" "${page}")
+        repositories+=${rs}
+    done
+
+    echo ${repositories}
+}
+
+function _get_repositories() {
+    local organization=$1; shift
+    local per_page=$1; shift
+    local page=$1; shift
+
+    repos=$(gh api -X GET "/orgs/${organization}/repos?page=${page}&per_page=${per_page}")
+
+    echo ${repos}
+}
+
+function _get_all_urls_to_clone() {
+    local repositories=$1; shift
+    local server_host_ssh=$1; shift
+    local has_to_change_host_ssh=$1; shift
+    local default_gh_host=$1; shift
+
+    urls=()
+
+    for repo_ssh_url in $(echo "${repositories}" | jq -r '.[].ssh_url'); do
+        url=${repo_ssh_url}
+        if ${has_to_change_host_ssh}; then
+            url=${repo_ssh_url/${default_gh_host}/${server_host_ssh}}
+        fi
+        urls+=("${url}")
+    done
+
+    echo "${urls[@]}"
+}
+
+function _clone_all() {
+    local urls_to_clone=$1; shift
+
+    commands=""
+
+    for url in ${urls_to_clone}; do
+
+        repo_name=$(echo ${url} | awk -F'/' '{print $NF}' | sed 's/.git$//')
+
+        if ${disable_clone_protection}; then
+            cmd+=" && export GIT_CLONE_PROTECTION_ACTIVE=false"
+        fi
+
+        if [ -d "${repo_name}" ]; then
+            if ${UPDATE_ORG_FOLDER}; then
+                cmd="echo \"Updating ${repo_name}\" in folder ${repo_name}"
+                cmd+=" && cd ${repo_name} && git pull --quiet"
+            else
+                cmd+=" && echo \"Repository ${repo_name} already exists\""
+            fi
+        else
+            cmd="echo \"Cloning ${repo_name}\""
+            cmd+=" && git clone ${url} --quiet"
+        fi
+        cmd+=" ;"
+
+        commands="${commands}${cmd}"
+
+    done
+    echo ${commands} | xargs -P "$(nproc)" -d ';' -n 1 sh -c
+}
+
+_require gh
+
+default_gh_host="github.com"
+server_host_ssh="github.com"
+UPDATE_ORG_FOLDER=false
+disable_clone_protection=false
+gh_cli_user_to_clone=$(gh api "user" -q '.login')
+
+while [ "$1" != "" ]; do
+    case $1 in
+    -o | --org)
+        organization="$2"
+        shift 2
+        ;;
+    -p | --path)
+        path_to_clone="$2"
+        shift 2
+        ;;
+    --gh-cli-user-to-clone)
+        gh_cli_user_to_clone="$2"
+        shift 2
+        ;;
+    --update-org-folder)
+        UPDATE_ORG_FOLDER=true
+        shift
+        ;;
+    --disable-clone-protection)
+        disable_clone_protection=true
+        shift
+        ;;
+    -s | --server-host-ssh)
+        server_host_ssh="$2"
+        shift 2
+        ;;
+    -h | --help)
+        _usage
+        exit
+        shift
+        ;;
+    *)
+        echo "Error: Invalid option"
+        _usage
+        exit 1
+        ;;
+    esac
+done
+
+[ -z "${path_to_clone}" ] && path_to_clone=$(pwd)
+[ -d "${path_to_clone}" ] || mkdir -p "${path_to_clone}"
+
+
+cd "${path_to_clone}" || exit 1
+
+actual_gh_cli_user=$(gh api "user" -q '.login')
+
+if [ "${gh_cli_user_to_clone}" != "${actual_gh_cli_user}" ]; then
+    gh auth switch -u "${gh_cli_user_to_clone}"
+fi
+
+_check_organization || exit 1
+
+_gh_clone_org "${organization}" "${server_host_ssh}" "${default_gh_host}"
+
+if [ "${gh_cli_user_to_clone}" != "${actual_gh_cli_user}" ]; then
+    gh auth switch -u "${actual_gh_cli_user}"
+fi
