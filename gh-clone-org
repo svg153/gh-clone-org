@@ -45,7 +45,7 @@ function _check_organization() {
         echo "Error: This extension only works with organizations"
         return 1
     fi
-    
+
     if ! gh api -X GET "/orgs/${organization}" --silent 2> /dev/null; then
         echo "Error: Organization ${organization} does not exist"
         return 1
@@ -55,7 +55,7 @@ function _check_organization() {
 function _get_repository_ssh_url() {
     local organization=$1; shift
     local server_host_ssh=$1; shift
-    
+
     local jq_query='.[].ssh_url'
     local query="orgs/${organization}/repos"
     
@@ -68,7 +68,7 @@ function _gh_clone_org() {
     local server_host_ssh=$1; shift
     local default_gh_host=$1; shift
     local disable_clone_protection=$1; shift
-    
+
     local has_to_change_host_ssh=false
     if [ "${server_host_ssh}" != "${default_gh_host}" ]; then
         has_to_change_host_ssh=true
