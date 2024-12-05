@@ -8,7 +8,12 @@ function _require() {
 }
 
 function _usage() {
-    echo "gh clone-org ORG [-p PATH]"
+    echo "Usage:"
+    echo "gh clone-org ORG [-p PATH] [--update-org-folder] [--disable-clone-protection] [-s SERVER_HOST_SSH] [-h]"
+    echo ""
+    echo "Clone all repositories from an organization in Github to a folder. If the repository already exists, it will update the repository. It will clone the repositories in parallel"
+    echo ""
+    echo "Options:"
     echo "  ORG"
     echo "    Github organization."
     echo "  -o, --org ORG"
@@ -16,6 +21,9 @@ function _usage() {
     echo "  -p, --path PATH"
     echo "    Path to clone the repositories. Will be created if it does not exist."
     echo "    Default: current directory."
+    echo "  --update-org-folder"
+    echo "    Update the repositories in the organization folder and clone the new ones."
+    echo "    Default: false"
     echo "  --diasable-clone-protection"
     echo "    Disable the clone protection. This is useful when you have a hook that blocks the clone or post-checkout hooks."
     echo "    Default: false"
@@ -85,9 +93,19 @@ function _gh_clone_org() {
         if ${disable_clone_protection}; then
             cmd="${cmd} && export GIT_CLONE_PROTECTION_ACTIVE=false"
         fi
-        cmd="${cmd} && git clone --quiet ${url}"
+
+        if [ -d "${repo_name}" ]; then
+            if ${update_org_folder}; then
+                cmd="${cmd} && cd ${repo_name} && git pull --quiet"
+            else
+                cmd="${cmd} && echo \"Repository ${repo_name} already exists\""
+            fi
+        else
+            cmd="${cmd} && git clone --quiet ${url}"
+        fi
+
         cmd="${cmd} ;"
-        commands="${commands}${cmd}"        
+        commands="${commands}${cmd}"
     done
     echo ${commands} | xargs -P "$(nproc)" -d ';' -n 1 sh -c
 }
@@ -96,6 +114,7 @@ _require gh
 
 default_gh_host="github.com"
 server_host_ssh="github.com"
+update_org_folder=false
 disable_clone_protection=false
 
 while [ "$1" != "" ]; do
@@ -107,6 +126,10 @@ while [ "$1" != "" ]; do
     -p | --path)
         shift
         path_to_clone="$1"
+        ;;
+    -u | --update-org-folder)
+        shift
+        update_org_folder=true
         ;;
     --disable-clone-protection)
         shift
