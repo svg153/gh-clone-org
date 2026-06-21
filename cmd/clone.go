@@ -183,10 +183,14 @@ func cloneOrg(cfg *config) error {
 	// Get SSH URLs for all repos
 	var repos []string
 	var err error
+	
+	// Issue #4: Rate limiter for API calls
+	limiter := NewRateLimiter().WithJitter(true)
+	
 	if cfg.userMode {
-		repos, err = getUserRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg)
+		repos, err = getUserRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg, limiter)
 	} else {
-		repos, err = getRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg)
+		repos, err = getRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg, limiter)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to get repositories: %w", err)
@@ -269,7 +273,7 @@ func cloneOrg(cfg *config) error {
 }
 
 // getRepoSSHURLs fetches all SSH URLs for repos in an organization
-func getRepoSSHURLs(org, serverHost string, cfg *config) ([]string, error) {
+func getRepoSSHURLs(org, serverHost string, cfg *config, limiter *RateLimiter) ([]string, error) {
 	client, err := api.DefaultRESTClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
@@ -280,6 +284,9 @@ func getRepoSSHURLs(org, serverHost string, cfg *config) ([]string, error) {
 	perPage := 100
 
 	for {
+		// Issue #4: Rate limit before each API call
+		limiter.Wait()
+		
 		url := fmt.Sprintf("orgs/%s/repos?per_page=%d&page=%d", org, perPage, page)
 		var repos []struct {
 			SSHURL   string `json:"ssh_url"`
@@ -337,7 +344,7 @@ func getRepoSSHURLs(org, serverHost string, cfg *config) ([]string, error) {
 }
 
 // getUserRepoSSHURLs fetches all SSH URLs for repos belonging to a user
-func getUserRepoSSHURLs(user, serverHost string, cfg *config) ([]string, error) {
+func getUserRepoSSHURLs(user, serverHost string, cfg *config, limiter *RateLimiter) ([]string, error) {
 	client, err := api.DefaultRESTClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
@@ -348,6 +355,9 @@ func getUserRepoSSHURLs(user, serverHost string, cfg *config) ([]string, error) 
 	perPage := 100
 
 	for {
+		// Issue #4: Rate limit before each API call
+		limiter.Wait()
+		
 		url := fmt.Sprintf("users/%s/repos?per_page=%d&page=%d&sort=updated&direction=desc", user, perPage, page)
 		var repos []struct {
 			SSHURL   string `json:"ssh_url"`
