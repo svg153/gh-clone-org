@@ -1,31 +1,71 @@
-name: Auto Release
+name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   release:
-    name: Create GitHub Release
+    name: Release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Get version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Validate PR title format
+        run: |
+          # Only validate if this is a PR merge (has pull_request_number)
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            echo "Validating PR title: $PR_TITLE"
+            
+            # Conventional commit pattern: type(scope)!: description or type!: description or type: description
+            if ! echo "$PR_TITLE" | grep -qP '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .+'; then
+              echo "::error::PR title does not follow Conventional Commits format."
+              echo "Expected format: type(scope)!: description"
+              echo "Examples: feat: add feature, fix: fix bug, feat(cli): add CLI flag"
+              exit 1
+            fi
+            echo "✅ PR title is valid"
+          else
+            echo "Not a PR merge, skipping title validation"
+          fi
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Get Next Version
+        id: semver
+        uses: ietf-tools/semver-action@v1
         with:
-          name: ${{ steps.version.outputs.VERSION }}
-          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
+          majorList: "feat!, breaking-change"
+          minorList: "feat, feature"
+          patchList: "fix, bugfix, perf, refactor, test, tests, docs, style, ci, chore, build"
+          skipInvalidTags: true
+
+      - name: Create GitHub Release
+        if: steps.semver.outputs.bump != 'none'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.semver.outputs.next }}
+          name: ${{ steps.semver.outputs.next }}
+          body: |
+            ## What's Changed
+            
+            ${{ steps.semver.outputs.changelog }}
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: false
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
