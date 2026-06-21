@@ -1,20 +1,8 @@
-# gh-clone-org
-
-<!--  add badges -->
-<p align="center">
-    <img src="https://img.shields.io/github/license/svg153/gh-clone-org" alt="GitHub">
-    <img src="https://img.shields.io/github/v/release/svg153/gh-clone-org" alt="GitHub release (latest by date)">
-    <img src="https://img.shields.io/github/issues/svg153/gh-clone-org" alt="GitHub issues">
-    <img src="https://img.shields.io/github/issues-pr/svg153/gh-clone-org" alt="GitHub pull requests">
-    <!-- <img src="https://img.shields.io/github/workflow/status/svg153/gh-clone-org/ci" alt="GitHub Workflow Status"> -->
-</p>
+# GitHub CLI Extension: gh-clone-org
 
 A GitHub CLI extension to clone all repositories in an organization as quickly as possible.
 
-## Prerequisites
-
-- GitHub CLI version 1.0.0 or higher
-- Git installed on your machine
+**v2.0.0** — Complete rewrite in Go!
 
 ## Installation
 
@@ -33,6 +21,26 @@ For help, run:
 ```sh
 gh clone-org --help
 ```
+
+## Features
+
+- **Parallel cloning** — Uses all available CPU cores
+- **Org validation** — Checks if the target is an organization (not a user)
+- **Update mode** — Update existing repos and clone new ones (`--update-org-folder`)
+- **Skip clone protection** — Disable `GIT_CLONE_PROTECTION_ACTIVE` (`--disable-clone-protection`)
+- **Multi-account** — Custom SSH host for multiple GitHub accounts (`-s github.com-company`)
+- **Pagination** — Handles orgs with 100+ repos
+
+## Roadmap (v2+)
+
+See [Issue #2](https://github.com/svg153/gh-clone-org/issues/2) for the full roadmap. Upcoming features:
+
+- [ ] Filter archived/forks repos
+- [ ] Rate limiting with exponential backoff
+- [ ] Dry-run mode
+- [ ] Verbose logging (`-v`, `-vv`, `-vvv`)
+- [ ] User mode (`--user`)
+- [ ] Configuration profiles
 
 ## License
 
