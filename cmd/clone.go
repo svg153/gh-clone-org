@@ -47,6 +47,7 @@ If a repository already exists, it will update it. Repositories are cloned in pa
 	RootCmd.Flags().StringArray("include-pattern", []string{}, "Glob pattern to include repos (can be repeated)")
 	RootCmd.Flags().StringArray("exclude-pattern", []string{}, "Glob pattern to exclude repos (can be repeated)")
 	RootCmd.Flags().Int("limit", 0, "Maximum number of repositories to clone (0 = unlimited)")
+	RootCmd.Flags().Bool("dry-run", false, "List repos that would be cloned without actually cloning")
 }
 
 type config struct {
@@ -61,6 +62,8 @@ type config struct {
 	includePatterns      []string
 	excludePatterns      []string
 	limit                int
+	// Issue #5: Dry-run
+	dryRun bool
 }
 
 func runClone(cmd *cobra.Command, args []string) error {
@@ -108,6 +111,7 @@ func runClone(cmd *cobra.Command, args []string) error {
 	cfg.includePatterns, _ = cmd.Flags().GetStringArray("include-pattern")
 	cfg.excludePatterns, _ = cmd.Flags().GetStringArray("exclude-pattern")
 	cfg.limit, _ = cmd.Flags().GetInt("limit")
+	cfg.dryRun, _ = cmd.Flags().GetBool("dry-run")
 
 	return cloneOrg(cfg)
 }
@@ -150,6 +154,17 @@ func cloneOrg(cfg *config) error {
 	}
 
 	fmt.Printf("Found %d repositories in %s\n", len(repos), cfg.organization)
+
+	// Issue #5: Dry-run mode
+	if cfg.dryRun {
+		fmt.Printf("\nWould clone %d repositories:\n", len(repos))
+		for i, url := range repos {
+			name := strings.TrimSuffix(filepath.Base(url), ".git")
+			fmt.Printf("  %d. %s (%s)\n", i+1, name, url)
+		}
+		fmt.Printf("\nTotal: %d repositories (none were cloned)\n", len(repos))
+		return nil
+	}
 
 	// Ensure target directory exists
 	if err := os.MkdirAll(cfg.path, 0755); err != nil {
