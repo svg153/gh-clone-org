@@ -1,0 +1,33 @@
+name: PR Title Validation
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+jobs:
+  validate-pr-title:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check PR title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prTitle = context.payload.pull_request.title;
+            const conventionalRegex = /^(feat|fix|docs|style|refactor|test|ci|chore|build|perf)(\(.+\))?!?: .+/;
+            
+            if (!conventionalRegex.test(prTitle)) {
+              const message = `PR title does not follow Conventional Commits format.
+              
+              Expected: <type>[optional scope]: <description>
+              Example: feat: add semantic commits workflow
+              
+              Valid types: feat, fix, docs, style, refactor, test, ci, chore, build, perf
+              
+              Please edit your PR title to match the format.`;
+              
+              core.setFailed(message);
+            } else {
+              console.log('✅ PR title is valid');
+            }
