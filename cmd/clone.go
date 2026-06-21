@@ -15,15 +15,17 @@ import (
 
 // cloneCmd represents the clone command
 var cloneCmd = &cobra.Command{
-	Use:   "clone-org [org]",
-	Short: "Clone all repositories in a GitHub organization",
-	Long: `Clone all repositories from a GitHub organization to a local folder.
+	Use:   "clone-org [org|user]",
+	Short: "Clone all repositories in a GitHub organization or user account",
+	Long: `Clone all repositories from a GitHub organization or user to a local folder.
 If a repository already exists, it will update it. Repositories are cloned in parallel.
 
 Examples:
   gh clone-org github
   gh clone-org github -p ~/github
-  gh clone-org github -s github.com-company`,
+  gh clone-org github -s github.com-company
+  gh clone-org svg153 --user
+  gh clone-org svg153 --user --skip-archived`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runClone,
 }
@@ -31,8 +33,8 @@ Examples:
 func init() {
 	// Replace RootCmd with cloneCmd so gh-clone-org IS the clone command
 	RootCmd = cloneCmd
-	RootCmd.Short = "Clone all repositories in a GitHub organization"
-	RootCmd.Long = `Clone all repositories from a GitHub organization to a local folder.
+	RootCmd.Short = "Clone all repositories in a GitHub organization or user account"
+	RootCmd.Long = `Clone all repositories from a GitHub organization or user to a local folder.
 If a repository already exists, it will update it. Repositories are cloned in parallel.`
 
 	RootCmd.Flags().StringP("org", "o", "", "GitHub organization (positional arg alias)")
@@ -49,6 +51,9 @@ If a repository already exists, it will update it. Repositories are cloned in pa
 	RootCmd.Flags().Int("limit", 0, "Maximum number of repositories to clone (0 = unlimited)")
 	RootCmd.Flags().Bool("dry-run", false, "List repos that would be cloned without actually cloning")
 	RootCmd.Flags().CountP("verbose", "v", "Increase verbosity: -v=clone status, -vv=git output, -vvv=debug info")
+	
+	// Issue #7: User support
+	RootCmd.Flags().Bool("user", false, "Clone user's personal repos instead of organization repos")
 }
 
 type config struct {
@@ -67,6 +72,8 @@ type config struct {
 	dryRun bool
 	// Issue #6: Verbose logging
 	verbose int
+	// Issue #7: User support
+	userMode bool
 }
 
 func runClone(cmd *cobra.Command, args []string) error {
@@ -82,11 +89,14 @@ func runClone(cmd *cobra.Command, args []string) error {
 	}
 
 	if cfg.organization == "" {
-		return fmt.Errorf("organization is required")
+		return fmt.Errorf("organization or user is required")
 	}
 
-	// Validate organization type
-	if err := validateOrg(cfg.organization); err != nil {
+	// Parse user mode
+	cfg.userMode, _ = cmd.Flags().GetBool("user")
+
+	// Validate target exists
+	if err := validateTarget(cfg.organization, cfg.userMode); err != nil {
 		return err
 	}
 
@@ -120,8 +130,8 @@ func runClone(cmd *cobra.Command, args []string) error {
 	return cloneOrg(cfg)
 }
 
-// validateOrg checks that the given name is an organization, not a user
-func validateOrg(name string) error {
+// validateTarget checks that the given name is a valid organization or user
+func validateTarget(name string, userMode bool) error {
 	client, err := api.DefaultRESTClient()
 	if err != nil {
 		return fmt.Errorf("failed to create API client: %w", err)
@@ -134,8 +144,17 @@ func validateOrg(name string) error {
 	if err := client.Get(fmt.Sprintf("users/%s", name), &user); err != nil {
 		return fmt.Errorf("failed to check user: %w", err)
 	}
+
+	if userMode {
+		if user.Type != "User" {
+			return fmt.Errorf("target %s is not a user (type: %s), use --user flag only with user accounts", name, user.Type)
+		}
+		return nil
+	}
+
+	// Default: check if it's an organization
 	if user.Type == "User" {
-		return fmt.Errorf("this extension only works with organizations, not users")
+		return fmt.Errorf("target %s is a user, not an organization. Use --user flag to clone user repos", name)
 	}
 
 	// Check org exists
@@ -149,15 +168,25 @@ func validateOrg(name string) error {
 	return nil
 }
 
-// cloneOrg clones all repositories in the organization
+// cloneOrg clones all repositories in the organization or user account
 func cloneOrg(cfg *config) error {
 	logger := NewLogger(LogLevel(cfg.verbose))
 	
 	// Issue #6: Debug level - log API call
-	logger.Debug(fmt.Sprintf("Fetching repositories for org: %s", cfg.organization))
+	if cfg.userMode {
+		logger.Debug(fmt.Sprintf("Fetching repositories for user: %s", cfg.organization))
+	} else {
+		logger.Debug(fmt.Sprintf("Fetching repositories for org: %s", cfg.organization))
+	}
 	
 	// Get SSH URLs for all repos
-	repos, err := getRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg)
+	var repos []string
+	var err error
+	if cfg.userMode {
+		repos, err = getUserRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg)
+	} else {
+		repos, err = getRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get repositories: %w", err)
 	}
@@ -259,6 +288,74 @@ func getRepoSSHURLs(org, serverHost string, cfg *config) ([]string, error) {
 		}
 		if err := client.Get(url, &repos); err != nil {
 			return nil, fmt.Errorf("failed to list repos: %w", err)
+		}
+
+		for _, r := range repos {
+			// Issue #3: Apply filters
+			if cfg.skipArchived && r.Archived {
+				continue
+			}
+			if cfg.skipForks && r.Fork {
+				continue
+			}
+			if len(cfg.includePatterns) > 0 {
+				if !matchesAnyPattern(r.Name, cfg.includePatterns) {
+					continue
+				}
+			}
+			if len(cfg.excludePatterns) > 0 {
+				if matchesAnyPattern(r.Name, cfg.excludePatterns) {
+					continue
+				}
+			}
+			if cfg.limit > 0 && len(urls) >= cfg.limit {
+				break
+			}
+
+			u := r.SSHURL
+			// Replace default host with custom SSH host if needed
+			if serverHost != "github.com" {
+				u = strings.Replace(u, "github.com", serverHost, 1)
+			}
+			urls = append(urls, u)
+		}
+
+		// Check if there are more pages
+		if len(repos) < perPage {
+			break
+		}
+		page++
+		
+		// Issue #3: Respect limit
+		if cfg.limit > 0 && len(urls) >= cfg.limit {
+			break
+		}
+	}
+
+	return urls, nil
+}
+
+// getUserRepoSSHURLs fetches all SSH URLs for repos belonging to a user
+func getUserRepoSSHURLs(user, serverHost string, cfg *config) ([]string, error) {
+	client, err := api.DefaultRESTClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create API client: %w", err)
+	}
+
+	var urls []string
+	page := 1
+	perPage := 100
+
+	for {
+		url := fmt.Sprintf("users/%s/repos?per_page=%d&page=%d&sort=updated&direction=desc", user, perPage, page)
+		var repos []struct {
+			SSHURL   string `json:"ssh_url"`
+			Name     string `json:"name"`
+			Archived bool   `json:"archived"`
+			Fork     bool   `json:"fork"`
+		}
+		if err := client.Get(url, &repos); err != nil {
+			return nil, fmt.Errorf("failed to list user repos: %w", err)
 		}
 
 		for _, r := range repos {
