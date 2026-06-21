@@ -55,6 +55,8 @@ If a repository already exists, it will update it. Repositories are cloned in pa
 	// Issue #7: User support
 	RootCmd.Flags().Bool("user", false, "Clone user's personal repos instead of organization repos")
 	RootCmd.Flags().String("profile", "", "Configuration profile (built-in: full, minimal, no-forks, or custom in .gh-clone-org.yaml)")
+	RootCmd.Flags().Int("parallel", 0, "Number of parallel clone workers (0 = NumCPU)")
+	RootCmd.Flags().Bool("bare", false, "Clone repositories as bare (git clone --bare)")
 }
 
 type config struct {
@@ -69,12 +71,19 @@ type config struct {
 	includePatterns      []string
 	excludePatterns      []string
 	limit                int
+	// Issue #4: Rate limiting
+	rateLimit bool
 	// Issue #5: Dry-run
 	dryRun bool
 	// Issue #6: Verbose logging
 	verbose int
 	// Issue #7: User support
 	userMode bool
+	// Issue #8: Profiles
+	profileName string
+	// Issue #15: Parallel and bare
+	parallel int
+	bareMode bool
 }
 
 func runClone(cmd *cobra.Command, args []string) error {
@@ -127,6 +136,20 @@ func runClone(cmd *cobra.Command, args []string) error {
 	cfg.limit, _ = cmd.Flags().GetInt("limit")
 	cfg.dryRun, _ = cmd.Flags().GetBool("dry-run")
 	cfg.verbose, _ = cmd.Flags().GetCount("verbose")
+
+	// Issue #8: Load profile if specified
+	cfg.profileName, _ = cmd.Flags().GetString("profile")
+	if cfg.profileName != "" {
+		profile, err := LoadProfile(cfg.profileName)
+		if err != nil {
+			return fmt.Errorf("failed to load profile %s: %w", cfg.profileName, err)
+		}
+		ApplyProfile(cfg, profile)
+	}
+
+	// Issue #15: Parse parallel and bare flags
+	cfg.parallel, _ = cmd.Flags().GetInt("parallel")
+	cfg.bareMode, _ = cmd.Flags().GetBool("bare")
 
 	return cloneOrg(cfg)
 }
@@ -231,8 +254,12 @@ func cloneOrg(cfg *config) error {
 		jobs = append(jobs, job{url: url, name: name})
 	}
 
-	// Process jobs in parallel using nproc
-	maxWorkers := runtime.NumCPU()
+	// Process jobs in parallel
+	// Issue #15: Use --parallel flag if specified, otherwise NumCPU
+	maxWorkers := cfg.parallel
+	if maxWorkers <= 0 {
+		maxWorkers = runtime.NumCPU()
+	}
 	if maxWorkers < 1 {
 		maxWorkers = 1
 	}
@@ -448,6 +475,12 @@ func cloneRepo(url, name string, cfg *config, logger *Logger) error {
 
 	// Build git clone command
 	args := []string{"clone", "--quiet", url, name}
+	
+	// Issue #15: Add --bare flag if specified
+	if cfg.bareMode {
+		args = append(args, "--bare")
+	}
+	
 	cmd := exec.Command("git", args...)
 	cmd.Dir = cfg.path
 
