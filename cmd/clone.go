@@ -48,6 +48,7 @@ If a repository already exists, it will update it. Repositories are cloned in pa
 	RootCmd.Flags().StringArray("exclude-pattern", []string{}, "Glob pattern to exclude repos (can be repeated)")
 	RootCmd.Flags().Int("limit", 0, "Maximum number of repositories to clone (0 = unlimited)")
 	RootCmd.Flags().Bool("dry-run", false, "List repos that would be cloned without actually cloning")
+	RootCmd.Flags().CountP("verbose", "v", "Increase verbosity: -v=clone status, -vv=git output, -vvv=debug info")
 }
 
 type config struct {
@@ -64,6 +65,8 @@ type config struct {
 	limit                int
 	// Issue #5: Dry-run
 	dryRun bool
+	// Issue #6: Verbose logging
+	verbose int
 }
 
 func runClone(cmd *cobra.Command, args []string) error {
@@ -112,6 +115,7 @@ func runClone(cmd *cobra.Command, args []string) error {
 	cfg.excludePatterns, _ = cmd.Flags().GetStringArray("exclude-pattern")
 	cfg.limit, _ = cmd.Flags().GetInt("limit")
 	cfg.dryRun, _ = cmd.Flags().GetBool("dry-run")
+	cfg.verbose, _ = cmd.Flags().GetCount("verbose")
 
 	return cloneOrg(cfg)
 }
@@ -147,22 +151,27 @@ func validateOrg(name string) error {
 
 // cloneOrg clones all repositories in the organization
 func cloneOrg(cfg *config) error {
+	logger := NewLogger(LogLevel(cfg.verbose))
+	
+	// Issue #6: Debug level - log API call
+	logger.Debug(fmt.Sprintf("Fetching repositories for org: %s", cfg.organization))
+	
 	// Get SSH URLs for all repos
 	repos, err := getRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to get repositories: %w", err)
 	}
 
-	fmt.Printf("Found %d repositories in %s\n", len(repos), cfg.organization)
+	logger.Println(fmt.Sprintf("Found %d repositories in %s", len(repos), cfg.organization))
 
 	// Issue #5: Dry-run mode
 	if cfg.dryRun {
-		fmt.Printf("\nWould clone %d repositories:\n", len(repos))
+		logger.Println(fmt.Sprintf("\nWould clone %d repositories:", len(repos)))
 		for i, url := range repos {
 			name := strings.TrimSuffix(filepath.Base(url), ".git")
-			fmt.Printf("  %d. %s (%s)\n", i+1, name, url)
+			logger.Println(fmt.Sprintf("  %d. %s (%s)", i+1, name, url))
 		}
-		fmt.Printf("\nTotal: %d repositories (none were cloned)\n", len(repos))
+		logger.Println(fmt.Sprintf("\nTotal: %d repositories (none were cloned)", len(repos)))
 		return nil
 	}
 
@@ -202,7 +211,7 @@ func cloneOrg(cfg *config) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if err := cloneRepo(j.url, j.name, cfg); err != nil {
+			if err := cloneRepo(j.url, j.name, cfg, logger); err != nil {
 				errChan <- fmt.Errorf("failed to clone %s: %w", j.name, err)
 				return
 			}
@@ -218,14 +227,14 @@ func cloneOrg(cfg *config) error {
 	}
 
 	if len(errs) > 0 {
-		fmt.Fprintf(os.Stderr, "\n%d errors occurred:\n", len(errs))
+		logger.Println(fmt.Sprintf("\n%d errors occurred:", len(errs)))
 		for _, e := range errs {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+			logger.Println(fmt.Sprintf("  - %s", e))
 		}
 		return fmt.Errorf("%d errors occurred during clone", len(errs))
 	}
 
-	fmt.Printf("\nDone! Cloned %d repositories to %s\n", len(jobs), cfg.path)
+	logger.Println(fmt.Sprintf("\nDone! Cloned %d repositories to %s", len(jobs), cfg.path))
 	return nil
 }
 
@@ -314,20 +323,20 @@ func matchesAnyPattern(name string, patterns []string) bool {
 }
 
 // cloneRepo clones or updates a single repository
-func cloneRepo(url, name string, cfg *config) error {
+func cloneRepo(url, name string, cfg *config, logger *Logger) error {
 	repoPath := filepath.Join(cfg.path, name)
 
 	// Check if repo already exists
 	if _, err := os.Stat(repoPath); err == nil {
 		if cfg.updateOrgFolder {
-			fmt.Printf("  Updating %s...\n", name)
-			return updateRepo(repoPath)
+			logger.Info(fmt.Sprintf("  Updating %s...", name))
+			return updateRepo(repoPath, logger)
 		}
-		fmt.Printf("  Skipping %s (already exists)\n", name)
+		logger.Info(fmt.Sprintf("  Skipping %s (already exists)", name))
 		return nil
 	}
 
-	fmt.Printf("  Cloning %s...\n", name)
+	logger.Info(fmt.Sprintf("  Cloning %s...", name))
 
 	// Build git clone command
 	args := []string{"clone", "--quiet", url, name}
@@ -341,6 +350,13 @@ func cloneRepo(url, name string, cfg *config) error {
 	}
 	cmd.Env = env
 
+	// Issue #6: Verbose level 2+ shows git output
+	if cfg.verbose >= 2 {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Args = []string{"git", "clone", url, name} // Remove --quiet for verbose
+	}
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git clone failed: %w: %s", err, string(output))
@@ -350,9 +366,17 @@ func cloneRepo(url, name string, cfg *config) error {
 }
 
 // updateRepo runs git pull in an existing repository
-func updateRepo(path string) error {
+func updateRepo(path string, logger *Logger) error {
 	cmd := exec.Command("git", "pull", "--quiet")
 	cmd.Dir = path
+
+	// Issue #6: Verbose level 2+ shows git output
+	if logger.level >= LogVerbose {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Args = []string{"git", "pull"}
+	}
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git pull failed: %w: %s", err, string(output))
