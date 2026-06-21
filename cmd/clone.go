@@ -54,6 +54,7 @@ If a repository already exists, it will update it. Repositories are cloned in pa
 	
 	// Issue #7: User support
 	RootCmd.Flags().Bool("user", false, "Clone user's personal repos instead of organization repos")
+	RootCmd.Flags().String("profile", "", "Configuration profile (built-in: full, minimal, no-forks, or custom in .gh-clone-org.yaml)")
 }
 
 type config struct {
