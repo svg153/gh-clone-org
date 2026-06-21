@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -39,6 +40,13 @@ If a repository already exists, it will update it. Repositories are cloned in pa
 	RootCmd.Flags().Bool("update-org-folder", false, "Update existing repositories and clone new ones")
 	RootCmd.Flags().Bool("disable-clone-protection", false, "Disable GIT_CLONE_PROTECTION_ACTIVE")
 	RootCmd.Flags().StringP("server-host-ssh", "s", "github.com", "SSH server host for multi-account setups")
+	
+	// Issue #3: Filters
+	RootCmd.Flags().Bool("skip-archived", false, "Skip archived repositories")
+	RootCmd.Flags().Bool("skip-forks", false, "Skip forked repositories")
+	RootCmd.Flags().StringArray("include-pattern", []string{}, "Glob pattern to include repos (can be repeated)")
+	RootCmd.Flags().StringArray("exclude-pattern", []string{}, "Glob pattern to exclude repos (can be repeated)")
+	RootCmd.Flags().Int("limit", 0, "Maximum number of repositories to clone (0 = unlimited)")
 }
 
 type config struct {
@@ -47,6 +55,12 @@ type config struct {
 	updateOrgFolder        bool
 	disableCloneProtection bool
 	serverHostSSH          string
+	// Issue #3: Filters
+	skipArchived         bool
+	skipForks            bool
+	includePatterns      []string
+	excludePatterns      []string
+	limit                int
 }
 
 func runClone(cmd *cobra.Command, args []string) error {
@@ -87,6 +101,13 @@ func runClone(cmd *cobra.Command, args []string) error {
 	cfg.updateOrgFolder, _ = cmd.Flags().GetBool("update-org-folder")
 	cfg.disableCloneProtection, _ = cmd.Flags().GetBool("disable-clone-protection")
 	cfg.serverHostSSH, _ = cmd.Flags().GetString("server-host-ssh")
+	
+	// Issue #3: Parse filters
+	cfg.skipArchived, _ = cmd.Flags().GetBool("skip-archived")
+	cfg.skipForks, _ = cmd.Flags().GetBool("skip-forks")
+	cfg.includePatterns, _ = cmd.Flags().GetStringArray("include-pattern")
+	cfg.excludePatterns, _ = cmd.Flags().GetStringArray("exclude-pattern")
+	cfg.limit, _ = cmd.Flags().GetInt("limit")
 
 	return cloneOrg(cfg)
 }
@@ -123,7 +144,7 @@ func validateOrg(name string) error {
 // cloneOrg clones all repositories in the organization
 func cloneOrg(cfg *config) error {
 	// Get SSH URLs for all repos
-	repos, err := getRepoSSHURLs(cfg.organization, cfg.serverHostSSH)
+	repos, err := getRepoSSHURLs(cfg.organization, cfg.serverHostSSH, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to get repositories: %w", err)
 	}
@@ -194,7 +215,7 @@ func cloneOrg(cfg *config) error {
 }
 
 // getRepoSSHURLs fetches all SSH URLs for repos in an organization
-func getRepoSSHURLs(org, serverHost string) ([]string, error) {
+func getRepoSSHURLs(org, serverHost string, cfg *config) ([]string, error) {
 	client, err := api.DefaultRESTClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
@@ -207,13 +228,37 @@ func getRepoSSHURLs(org, serverHost string) ([]string, error) {
 	for {
 		url := fmt.Sprintf("orgs/%s/repos?per_page=%d&page=%d", org, perPage, page)
 		var repos []struct {
-			SSHURL string `json:"ssh_url"`
+			SSHURL   string `json:"ssh_url"`
+			Name     string `json:"name"`
+			Archived bool   `json:"archived"`
+			Fork     bool   `json:"fork"`
 		}
 		if err := client.Get(url, &repos); err != nil {
 			return nil, fmt.Errorf("failed to list repos: %w", err)
 		}
 
 		for _, r := range repos {
+			// Issue #3: Apply filters
+			if cfg.skipArchived && r.Archived {
+				continue
+			}
+			if cfg.skipForks && r.Fork {
+				continue
+			}
+			if len(cfg.includePatterns) > 0 {
+				if !matchesAnyPattern(r.Name, cfg.includePatterns) {
+					continue
+				}
+			}
+			if len(cfg.excludePatterns) > 0 {
+				if matchesAnyPattern(r.Name, cfg.excludePatterns) {
+					continue
+				}
+			}
+			if cfg.limit > 0 && len(urls) >= cfg.limit {
+				break
+			}
+
 			u := r.SSHURL
 			// Replace default host with custom SSH host if needed
 			if serverHost != "github.com" {
@@ -227,9 +272,30 @@ func getRepoSSHURLs(org, serverHost string) ([]string, error) {
 			break
 		}
 		page++
+		
+		// Issue #3: Respect limit
+		if cfg.limit > 0 && len(urls) >= cfg.limit {
+			break
+		}
 	}
 
 	return urls, nil
+}
+
+// matchesAnyPattern checks if a name matches any of the given glob patterns
+func matchesAnyPattern(name string, patterns []string) bool {
+	for _, pattern := range patterns {
+		matched, _ := filepath.Match(pattern, name)
+		if matched {
+			return true
+		}
+		// Also support regex patterns
+		matched, _ = regexp.MatchString(pattern, name)
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 // cloneRepo clones or updates a single repository
