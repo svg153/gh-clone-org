@@ -8,42 +8,30 @@ on:
 
 jobs:
   test:
+    name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: true
-
       - name: Install dependencies
         run: go mod download
-
       - name: Run tests
-        run: go test -v -coverprofile=coverage.out ./...
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.out
-          fail_ci_if_error: false
+        run: go test -v ./...
 
   build:
+    name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-
       - name: Build
         run: go build -o gh-clone-org .
-
-      - name: Verify binary
+      - name: Smoke test
         run: ./gh-clone-org --help
